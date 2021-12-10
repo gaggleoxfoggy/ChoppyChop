@@ -1,4 +1,4 @@
-#!./.env/bin/python
+#!./.env/bin/python3
 # codng: utf-8
 
 '''Video Trimmer
