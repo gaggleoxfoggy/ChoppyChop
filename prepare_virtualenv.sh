@@ -13,6 +13,9 @@ function prepare_virtualenv_mac {
     brew install ffmpeg --with-fdk-aac --with-tools --with-freetype --with-libass --with-libvorbis --with-libvpx --with-x265
     brew upgrade ffmpeg
 
+    virtualenv .env
+    .env/bin/pip install --upgrade -r requirements.txt
+
     echo Installing Python 3...
     brew install python3
     echo Installing certificates...
@@ -26,11 +29,6 @@ function prepare_virtualenv_linux {
 
 # Ensure virtualenv exists, create it if it doesn't
 echo Looking for virtualenv...
-if [ -d .env ]; then
-    if [ ! -f .env/bin/python3 ]; then
-        sudo rm -r .env
-    fi
-fi
 
 if [ ! -f .env/bin/python3 ]; then
     echo Virtualenv not found...
@@ -41,7 +39,6 @@ if [ ! -f .env/bin/python3 ]; then
         prepare_virtualenv_linux
     fi
     echo Creating virtualenv
-    ./create_virtualenv.sh
 fi
 
 echo Upgrading dependencies...
