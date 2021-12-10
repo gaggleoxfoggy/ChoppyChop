@@ -10,4 +10,4 @@ git pull origin main
 
 # Run
 source .env/bin/activate
-./ChoppyChop.py "$@"
+.env/bin/python ./ChoppyChop.py "$@"
