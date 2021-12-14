@@ -1,4 +1,4 @@
-#!./.env/bin/python3
+#!./.env/bin/python
 # codng: utf-8
 
 '''Video Trimmer
@@ -44,11 +44,13 @@ FFMPEG_CHOP = ['ffmpeg -y',
                 '-to', '{runtime}',
                 '-i', '{inpath}',
                 '-c copy',
+                '-bsf:v h264_mp4toannexb',
                 '{outpath}']
 FFMPEG_IMAGE = ['ffmpeg -y',
                 '-f lavfi -i anullsrc -loop 1',
                 '-i', '{inpath}',
                 '-c:v libx264',
+                '-b:v 10M',
                 '-c:a aac',
                 '-ar', '{sample_rate}',
                 '-t 3',
@@ -59,7 +61,8 @@ FFMPEG_IMAGE = ['ffmpeg -y',
 FFMPEG_VIDEO_MOS = ['ffmpeg -y',
                 '-f lavfi -i anullsrc',
                 '-i', '{inpath}',
-                '-c:v libx264',
+                '-c:v h264_videotoolbox',
+                '-b:v 10M',
                 '-c:a aac',
                 '-ar', '{sample_rate}',
                 '-r', '{framerate}',
@@ -68,7 +71,8 @@ FFMPEG_VIDEO_MOS = ['ffmpeg -y',
                 '{outpath}']
 FFMPEG_VIDEO = ['ffmpeg -y',
                 '-i', '{inpath}',
-                '-c:v libx264',
+                '-c:v h264_videotoolbox',
+                '-b:v 10M',
                 '-c:a', '{audio_format}',
                 '-ar', '{sample_rate}',
                 '-t 3',
@@ -76,12 +80,23 @@ FFMPEG_VIDEO = ['ffmpeg -y',
                 '-pix_fmt', '{pix_fmt}',
                 '-vf scale={width}:{height}',
                 '{outpath}']
-
+FFMPEG_WATERMARK = ['ffmpeg -y',
+                '-i', '{inpath}',
+                '-i', '{watermark}',
+                '-c:v h264_videotoolbox',
+                '-b:v 10M',
+                '-filter_complex overlay',
+                '{outpath}']
+                
 def clear():
-    '''Clear terminal window'''
+    #Clear terminal window
     p = subprocess.Popen(['clear'])
     p.communicate()
 
+def quotes(bs):
+    #return string in quotes
+    bs = "'" + bs + "'"
+    return bs
 
 def intro_message():
     log.info('-------------------------------------------------------------------------')
@@ -96,13 +111,45 @@ def make_dirs():
         if not os.path.exists(folder):
             os.makedirs(folder)
 
+def clean_leftovers():
+    #clear leftovers from previous run
+    files = os.path.join(OUTPUT_LOCATION, 'listfile.txt')
+    if os.path.exists(files):
+                os.remove(files)
+    files = os.path.join(OUTPUT_LOCATION, 'intro.ts')
+    if os.path.exists(files):
+                os.remove(files)
+    files = os.path.join(OUTPUT_LOCATION, 'outro.ts')
+    if os.path.exists(files):
+                os.remove(files)
+
 def get_url():
     "Prompt user for local file path"
     while True:
         url = input('Drag and drop local file: ')
-        path = re.sub("'", '', url).strip()
+        #path = re.sub("'", '', url).strip()
+        path = re.sub('\\\\', '', url).strip()
         if check_path(path):
             return path
+        log.warning('Something went wrong, please ensure you entered a valid file path.')
+
+def get_addvideo(watermark):
+    "Prompt user for additional local file path"
+    while True:
+        addwm = ''
+        url = input('Drag and drop additional versions (Leave blank for none): ')
+        #path = re.sub("'", '', url).strip()
+        path = re.sub('\\\\', '', url).strip()
+        if check_path(path):
+            if watermark:
+                addwm = input('Would you like this version watermarked? (y/n): ') or 'n'
+                if addwm[0].lower() == 'y':
+                    addwm = watermark
+                else:
+                    addwm = ''
+            return path, addwm
+        if not path:
+            return path, addwm
         log.warning('Something went wrong, please ensure you entered a valid file path.')
 
 def check_path(path):
@@ -137,6 +184,7 @@ def read_metadata(metadata):
             vid_codec = stream['codec_name']
             pix_fmt = stream['pix_fmt']
             framerate = stream['r_frame_rate']
+            #bitrate = stream['bit_rate'] zzzfails on image source
         else:
             if stream.get('codec_type') == 'audio':
                 audio_codec = stream['codec_name']
@@ -162,35 +210,37 @@ def get_time(mode):
         bs = input('What %s point do you want? (hh:mm:ss.ms, leave blank for default): ' % mode)
         return bs
 
-def get_ends(mode, video, watermark):
+def get_ends(mode, video):
     # prompt for intro or outro
     while True:
-        bs = input('Drag & drop %s file, leave blank for none: ' % mode)
+        bs = input('Drag & drop %s file (leave blank for none): ' % mode)
         if not bs:
             return bs
         else:
-            path = re.sub("'", '', bs).strip()
+            #path = re.sub("'", '', bs).strip()
+            path = re.sub('\\\\', '', bs).strip()
             if check_path(path):
                 #filename, ext = os.path.splitext(video)
-                encode(path, '', '', mode, video, '', watermark)
+                encode(path, '', '', mode, video, '', '')
                 return path
         log.warning('Something went wrong, please ensure you entered a valid file path.')
 
 def get_watermark():
     # prompt for watermark
     while True:
-        bs = input('Drag & drop watermark file, leave blank for none: ')
+        bs = input('Drag & drop watermark file (leave blank for none): ')
         if not bs:
             return bs
         else:
-            path = re.sub("'", '', bs).strip()
+            #path = re.sub("'", '', bs).strip()
+            path = re.sub('\\\\', '', bs).strip()
             if check_path(path):
                 return path
         log.warning('Something went wrong, please ensure you entered a valid file path.')
 
 def get_subclip():
     # prompt for additional name extensions
-    bs = input('Enter additional filename options, leave blank for none: ')
+    bs = input('Enter additional filename options (leave blank for none): ')
     return bs
 
 def process(proc, duration):
@@ -233,19 +283,20 @@ def process(proc, duration):
 
 def encode(video, inpoint, outpoint, opt1, opt2, opt3, watermark):
     # output video files
-    #encode(path, '', '', mode, video, watermark)
     metadata = get_metadata(video)
     width, height, vid_codec, pix_fmt, framerate, audio_codec, sample_rate, duration, filetype = read_metadata(metadata)
     filename, ext = os.path.splitext(video)
     filename = os.path.splitext(os.path.basename(filename))[0]
-    videopath = "'" + video + "'"
+    videopath = quotes(video)
+    if opt3:
+        opt3 = '_' + opt3
+
     if opt1 == 'intro' or opt1 == 'outro': #match intro/outro to destination format
         metadata = get_metadata(opt2)
-        width, height, vid_codec, pix_fmt, framerate, audio_codec, sample_rate, duration, null = read_metadata(metadata)
+        width, height, null, pix_fmt, framerate, null, sample_rate, duration, null = read_metadata(metadata)
         filename, ext = os.path.splitext(opt2)
         filename = os.path.splitext(os.path.basename(filename))[0]
-        new_filename = filename + "_" + opt1
-        outpath = os.path.join("'" + OUTPUT_LOCATION, new_filename + ext + "'")
+        outpath = os.path.join("'" + OUTPUT_LOCATION, opt1 + ".ts'")
         if os.path.exists(outpath): #skip encode if file already exist
             return
         else:
@@ -264,36 +315,50 @@ def encode(video, inpoint, outpoint, opt1, opt2, opt3, watermark):
         if not outpoint:
             outpoint = time.strftime('%H:%M:%S', time.gmtime(duration + 1))
         if opt1 or opt2:
-            tempoutpath = os.path.join("'" + OUTPUT_LOCATION, filename + '_TEMP' + ext + "'")
-            proc = ' '.join(FFMPEG_CHOP).format(inpath=videopath, startpoint=inpoint, outpath=tempoutpath, runtime=outpoint)
+            tmpoutpath = os.path.join("'" + OUTPUT_LOCATION, filename + opt3 + "_TEMP.ts'")
+            proc = ' '.join(FFMPEG_CHOP).format(inpath=videopath, startpoint=inpoint, outpath=tmpoutpath, runtime=outpoint)
             process(proc, duration)
             listfile = os.path.join(OUTPUT_LOCATION, 'listfile.txt')
-            outpath = os.path.join(OUTPUT_LOCATION, filename + ext) 
+            outpath = os.path.join(OUTPUT_LOCATION, filename + opt3 + ext) 
             if os.path.exists(listfile):
                 os.remove(listfile)
             with open(listfile, 'w+') as f:
                 if opt1:
-                    f.write('file ' + "'" + opt1 + "'")
+                    f.write("file '" + OUTPUT_LOCATION + "intro.ts'")
                     f.write('\n')
-                if opt1:
-                    f.write('file ' + tempoutpath)
-                    f.write('\n')
+                f.write('file ' + tmpoutpath)
+                f.write('\n')
                 if opt2:
-                    f.write('file ' + "'" + opt2 + "'")
+                    f.write("file '" + OUTPUT_LOCATION + "outro.ts'")
                     f.write('\n')
-            proc = 'ffmpeg -f concat -i ' + listfile + ' -c copy ' + outpath
+            proc = 'ffmpeg -y -safe 0 -f concat -i ' + listfile + ' -c copy ' + quotes(outpath)
             process(proc, duration)
-           # os.remove(listfile)
-           # os.remove(tempoutpath)
+            if os.path.exists(listfile):
+                os.remove(listfile)
+            tmpoutpath = os.path.join(OUTPUT_LOCATION, filename + opt3 + "_TEMP.ts")
+            if os.path.exists(tmpoutpath):
+                os.remove(tmpoutpath)
 
         else:
-            outpath = os.path.join("'" + OUTPUT_LOCATION, filename + ext + "'")
+            outpath = os.path.join("'" + OUTPUT_LOCATION, filename + opt3 + ext + "'")
             proc = ' '.join(FFMPEG_CHOP).format(inpath=videopath, startpoint=inpoint, outpath=outpath, runtime=outpoint)
             process(proc, duration)
 
-        #shutil.copy2(path, os.path.join(DOWNLOADING, new_name))
+        if watermark:
+            wmfilename, wmext = os.path.splitext(watermark)
+            tmpwatermark = os.path.join(OUTPUT_LOCATION, 'WATERMARK' + wmext)
+            proc = 'ffmpeg -y -i ' + watermark + ' -vf scale=' + str(width) + ':' + str(height) + ' ' + quotes(tmpwatermark)
+            process(proc, duration)
+            wmpath = os.path.join("'" + OUTPUT_LOCATION, filename + opt3 +'_WATERMARK' + ext + "'")
+            proc = ' '.join(FFMPEG_WATERMARK).format(inpath=quotes(outpath), watermark=quotes(tmpwatermark), outpath=wmpath)
+            process(proc, duration)
+            if os.path.exists(tmpwatermark):
+                os.remove(tmpwatermark)
+
 
 def main():
+    clean_leftovers()
+    
     while True:
         make_dirs()
         clear()
@@ -302,11 +367,14 @@ def main():
         video = get_url()
         inpoint, outpoint = get_trim()        
         watermark = get_watermark()
-        intro = get_ends('intro', video, watermark)
-        outro = get_ends('outro', video, watermark)
+        intro = get_ends('intro', video)
+        outro = get_ends('outro', video)
         subclip = get_subclip()
+        addvideo, addwm = get_addvideo(watermark)
 
         encode(video, inpoint, outpoint, intro, outro, subclip, watermark)
+        if addvideo:
+            encode(addvideo, inpoint, outpoint, intro, outro, subclip, addwm)
 
 if __name__ == '__main__':
     main()
