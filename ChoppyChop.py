@@ -61,7 +61,7 @@ FFMPEG_IMAGE = ['ffmpeg -y',
 FFMPEG_VIDEO_MOS = ['ffmpeg -y',
                 '-f lavfi -i anullsrc',
                 '-i', '{inpath}',
-                '-c:v libx264', #h264_videotoolbox',
+                '-c:v h264_videotoolbox',
                 '-b:v 10M',
                 '-c:a aac',
                 '-ar', '{sample_rate}',
@@ -71,7 +71,7 @@ FFMPEG_VIDEO_MOS = ['ffmpeg -y',
                 '{outpath}']
 FFMPEG_VIDEO = ['ffmpeg -y',
                 '-i', '{inpath}',
-                '-c:v libx264', #h264_videotoolbox',
+                '-c:v h264_videotoolbox',
                 '-b:v 10M',
                 '-c:a', '{audio_format}',
                 '-ar', '{sample_rate}',
@@ -83,7 +83,7 @@ FFMPEG_VIDEO = ['ffmpeg -y',
 FFMPEG_WATERMARK = ['ffmpeg -y',
                 '-i', '{inpath}',
                 '-i', '{watermark}',
-                '-c:v libx264', #h264_videotoolbox',
+                '-c:v h264_videotoolbox',
                 '-b:v 10M',
                 '-filter_complex overlay',
                 '{outpath}']
@@ -340,8 +340,8 @@ def encode(video, inpoint, outpoint, opt1, opt2, opt3, watermark):
                 os.remove(tmpoutpath)
 
         else:
-            outpath = os.path.join("'" + OUTPUT_LOCATION, filename + opt3 + ext + "'")
-            proc = ' '.join(FFMPEG_CHOP).format(inpath=videopath, startpoint=inpoint, outpath=outpath, runtime=outpoint)
+            outpath = os.path.join(OUTPUT_LOCATION, filename + opt3 + ext)
+            proc = ' '.join(FFMPEG_CHOP).format(inpath=videopath, startpoint=inpoint, outpath=quotes(outpath), runtime=outpoint)
             process(proc, duration)
 
         if watermark:
