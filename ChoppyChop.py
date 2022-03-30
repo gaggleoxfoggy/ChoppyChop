@@ -7,6 +7,7 @@ Cut down h.264 videos without transcoding.
 
 '''
 
+from logging.handlers import WatchedFileHandler
 import shutil
 import os
 import sys
@@ -33,6 +34,7 @@ ch = logging.StreamHandler()
 log.addHandler(fh)
 log.addHandler(ch)
 log_file_only.addHandler(fh)
+
 
 # Set paths
 OUTPUT_LOCATION = os.path.expanduser('~/Desktop/ChoppyChop/')
@@ -89,9 +91,13 @@ FFMPEG_WATERMARK = ['ffmpeg -y',
                 '{outpath}']
                 
 def clear():
-    #Clear terminal window
-    p = subprocess.Popen(['clear'])
-    p.communicate()
+    '''Clear terminal window'''
+    if sys.platform == 'win32':
+        p = subprocess.Popen('cls', shell=True)
+        p.communicate()
+    else:
+        p = subprocess.Popen(['clear'])
+        p.communicate()
 
 def quotes(bs):
     #return string in quotes
@@ -210,6 +216,25 @@ def get_time(mode):
         bs = input('What %s point do you want? (hh:mm:ss.ms, leave blank for default): ' % mode)
         return bs
 
+def get_breaks():
+    # prompt for break segments to remove from the final
+    while True:
+        bs = input('Would you like to cut out break segments? (Y/N): ') or 'n'
+        if not bs[0].upper() == 'Y':
+            return False
+        else:
+            bin = True
+            breaks = []
+            while bin:
+                bin = input('Enter break in point (hh:mm:ss.ms, leave blank if no more points): ') or False
+                if bin:
+                    bout = input('Enter break out point (hh:mm:ss.ms): ') or False
+                if bin and bout:
+                    breaks.append(bin)
+                    breaks.append(bout)
+            return breaks
+            
+
 def get_ends(mode, video):
     # prompt for intro or outro
     while True:
@@ -221,7 +246,7 @@ def get_ends(mode, video):
             path = re.sub('\\\\', '', bs).strip()
             if check_path(path):
                 #filename, ext = os.path.splitext(video)
-                encode(path, '', '', mode, video, '', '')
+                encode(path, '', '', mode, video, '', '', '')
                 return path
         log.warning('Something went wrong, please ensure you entered a valid file path.')
 
@@ -281,14 +306,15 @@ def process(proc, duration):
                 seconds_encoded = total_seconds
     p.communicate()
 
-def encode(video, inpoint, outpoint, opt1, opt2, opt3, watermark):
+def encode(video, inpoint, outpoint, opt1, opt2, opt3, watermark, breaks):
     # output video files
     metadata = get_metadata(video)
     width, height, vid_codec, pix_fmt, framerate, audio_codec, sample_rate, duration, filetype = read_metadata(metadata)
     filename, ext = os.path.splitext(video)
+    ext = '.mp4'
     filename = os.path.splitext(os.path.basename(filename))[0]
     videopath = quotes(video)
-    if opt3:
+    if opt3: #additional filename options was specified
         opt3 = '_' + opt3
 
     if opt1 == 'intro' or opt1 == 'outro': #match intro/outro to destination format
@@ -309,7 +335,64 @@ def encode(video, inpoint, outpoint, opt1, opt2, opt3, watermark):
                 proc = ' '.join(FFMPEG_VIDEO).format(inpath=videopath, audio_format=audio_codec, sample_rate=sample_rate, framerate=framerate, pix_fmt=pix_fmt, width=width, height=height, outpath=outpath)
         process(proc, duration)
 
-    else: # process as normal if not intro/outro
+    elif breaks: #if breaks are selected, process each segment and then combine
+        if not inpoint:
+            inpoint = '00:00:00'
+        if not outpoint:
+            outpoint = time.strftime('%H:%M:%S', time.gmtime(duration + 1))
+        ct = 0
+        cutlist = []
+        for cuts in breaks: #segment out breaks and make a list of output files
+            ct += 1
+            tmpout = False
+            if ct == 1:
+                tmpin = inpoint
+                tmpout = cuts
+            else:
+                if ct % 2 == 0:
+                    tmpin = cuts
+                    if ct == len(breaks):
+                        tmpout = outpoint
+                else:
+                    tmpout = cuts
+            if tmpout:
+                tmpoutpath = os.path.join("'" + OUTPUT_LOCATION, filename + str(ct) + "_TEMP.ts'")
+                cutlist.append(tmpoutpath)
+                proc = ' '.join(FFMPEG_CHOP).format(inpath=videopath, startpoint=tmpin, outpath=tmpoutpath, runtime=tmpout)
+                process(proc, duration)
+        listfile = os.path.join(OUTPUT_LOCATION, 'listfile.txt')
+        outpath = os.path.join(OUTPUT_LOCATION, filename + opt3 + ext) 
+        if os.path.exists(listfile):
+            os.remove(listfile)
+        with open(listfile, 'w+') as f:
+            if opt1:
+                f.write("file '" + OUTPUT_LOCATION + "intro.ts'")
+                f.write('\n')
+            for cuts in cutlist:
+                f.write('file %s' % cuts)
+                f.write('\n')
+            if opt2:
+                f.write("file '" + OUTPUT_LOCATION + "outro.ts'")
+                f.write('\n')
+        proc = 'ffmpeg -y -safe 0 -f concat -i ' + listfile + ' -c copy ' + quotes(outpath)
+        process(proc, duration)
+        if os.path.exists(listfile):
+            os.remove(listfile)
+        for tmpoutpath in cutlist:
+            if os.path.exists(tmpoutpath):
+                os.remove(tmpoutpath)
+        if watermark:
+            wmfilename, wmext = os.path.splitext(watermark)
+            tmpwatermark = os.path.join(OUTPUT_LOCATION, 'WATERMARK' + wmext)
+            proc = 'ffmpeg -y -i ' + watermark + ' -vf scale=' + str(width) + ':' + str(height) + ' ' + quotes(tmpwatermark)
+            process(proc, duration)
+            wmpath = os.path.join("'" + OUTPUT_LOCATION, filename + opt3 +'_WATERMARK' + ext + "'")
+            proc = ' '.join(FFMPEG_WATERMARK).format(inpath=quotes(outpath), watermark=quotes(tmpwatermark), outpath=wmpath)
+            process(proc, duration)
+            if os.path.exists(tmpwatermark):
+                os.remove(tmpwatermark)
+        
+    else: # process as normal if not intro/outro and no breaks selected
         if not inpoint:
             inpoint = '00:00:00'
         if not outpoint:
@@ -365,16 +448,17 @@ def main():
         intro_message()
 
         video = get_url()
-        inpoint, outpoint = get_trim()        
+        inpoint, outpoint = get_trim() 
+        breaks = get_breaks()       
         watermark = get_watermark()
         intro = get_ends('intro', video)
         outro = get_ends('outro', video)
         subclip = get_subclip()
         addvideo, addwm = get_addvideo(watermark)
 
-        encode(video, inpoint, outpoint, intro, outro, subclip, watermark)
+        encode(video, inpoint, outpoint, intro, outro, subclip, watermark, breaks)
         if addvideo:
-            encode(addvideo, inpoint, outpoint, intro, outro, subclip, addwm)
+            encode(addvideo, inpoint, outpoint, intro, outro, subclip, addwm, breaks)
 
 if __name__ == '__main__':
     main()
